@@ -349,8 +349,14 @@ class ChorchaQuizBot:
             
             # Send updated cookies to Telegram if in GITHUB_ACTIONS environment
             if os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"):
+                secret_updated = False
                 try:
-                    self.send_updated_cookies_to_telegram(cookies)
+                    secret_updated = self.update_github_secret(cookies)
+                except Exception as e:
+                    logger.info(f"Failed updating GitHub Secret: {e}")
+                
+                try:
+                    self.send_updated_cookies_to_telegram(cookies, secret_updated=secret_updated)
                 except Exception as e:
                     logger.info(f"Failed sending updated cookies to Telegram: {e}")
                     
@@ -359,15 +365,48 @@ class ChorchaQuizBot:
             logger.info(f"Login failed: {e}")
             return False
 
-    def send_updated_cookies_to_telegram(self, cookies):
+    def update_github_secret(self, cookies) -> bool:
+        """Updates GITHUB secret CHORCHA_COOKIES dynamically using the GH_PAT or CLI."""
+        gh_pat = os.environ.get("GH_PAT")
+        if not gh_pat:
+            logger.info("GH_PAT not found in environment. Skipping GitHub Secret update.")
+            return False
+        
+        logger.info("Attempting to update GitHub Secret CHORCHA_COOKIES...")
+        try:
+            import subprocess
+            cookies_str = json.dumps(cookies)
+            
+            env = os.environ.copy()
+            env["GH_TOKEN"] = gh_pat
+            
+            repo = os.environ.get("GITHUB_REPOSITORY", "streakaliver/maruf")
+            
+            result = subprocess.run(
+                ["gh", "secret", "set", "CHORCHA_COOKIES", "--body", cookies_str, "--repo", repo],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=True
+            )
+            logger.info("Successfully updated GitHub Secret CHORCHA_COOKIES!")
+            return True
+        except Exception as e:
+            logger.info(f"Failed updating GitHub Secret via CLI: {e}")
+            return False
+
+    def send_updated_cookies_to_telegram(self, cookies, secret_updated=False):
         """Sends the newly generated session cookies directly to Telegram as a JSON code block."""
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
         cookies_json = json.dumps(cookies, indent=2)
         
+        status_msg = "✅ <b>GitHub Secret CHORCHA_COOKIES has been automatically updated!</b>" if secret_updated else "⚠️ <b>Could not update GitHub Secret automatically. Please update it manually.</b>"
+        
         msg = (
             "🔄 <b>Chorcha Bot: New Session Cookies Generated!</b>\n"
             "───────────────────────────\n"
-            "The bot logged in successfully and generated a new session token. Please copy the JSON block below and update your GitHub Secret <code>CHORCHA_COOKIES</code>:\n\n"
+            f"{status_msg}\n\n"
+            "Here is the new JSON block for reference:\n"
             f"<pre>{html.escape(cookies_json)}</pre>"
         )
         
